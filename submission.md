@@ -88,3 +88,22 @@ In `get_playlist_songs()` in `services/playlist_service.py`, the return statemen
 
 **The fix and side-effect check:**
 Changed `return [song.to_dict() for song in songs[:-1]]` to `return [song.to_dict() for song in songs]` — removing the erroneous slice. Verified the fix by querying all three playlists (Late Night Vibes, Friday Energy, Study Mode) and confirming each returned the correct number of songs matching the database. The `get_playlist()` and `get_user_playlists()` functions in the same file were not affected since they do not use the songs query.
+
+---
+
+### Issue #3 — The same song keeps showing up twice in search
+
+**How I reproduced it:**
+Ran a raw SQL query directly against the database:
+`SELECT s.title, s.id FROM song s LEFT JOIN song_tags st ON s.id = st.song_id WHERE s.title LIKE '%After Hours%'`
+This returned 3 identical rows for After Hours — one duplicate per tag. Confirmed the same pattern for Crown Heights Anthem (3 tags, 3 duplicate rows) and Harlem Renaissance (3 tags, 3 duplicate rows). The API was masking the duplicates through SQLAlchemy's ORM object mapping but the underlying query was producing duplicate rows for every song with multiple tags.
+
+**How I found the root cause:**
+The README confirmed bugs live in the services layer. I opened `services/search_service.py` and read `search_songs()`. The function uses an `outerjoin` on the `song_tags` association table to enable tag-based filtering. I recognized that a LEFT JOIN on a many-to-many association table produces one row per matching join — so a song with 3 tags produces 3 rows. I confirmed this by running the raw SQL directly against the database which showed exactly 3 duplicate rows per multi-tag song.
+
+**The root cause:**
+In `search_songs()` in `services/search_service.py`, the query uses `.outerjoin(song_tags, Song.id == song_tags.c.song_id)` to join songs with their tags. When a song has multiple tags this join produces one result row per tag — a song with 3 tags appears 3 times in the raw query results. SQLAlchemy's ORM deduplicates these at the object level in some configurations, but the underlying SQL query is incorrect and would produce visible duplicates under different ORM settings or with raw query execution.
+
+**The fix and side-effect check:**
+Added `.distinct()` before `.all()` in the query chain to eliminate duplicate rows at the SQL level. Verified the fix by searching for "after hours" which previously produced 3 duplicate rows in raw SQL — the API now correctly returns 1 result. Also verified that songs without tags (like Midnight Drive) still return correctly with 1 result, and that songs with a single tag (like Block Party) also return correctly — confirming `.distinct()` did not affect results for non-duplicated cases.
+
