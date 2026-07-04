@@ -107,3 +107,19 @@ In `search_songs()` in `services/search_service.py`, the query uses `.outerjoin(
 **The fix and side-effect check:**
 Added `.distinct()` before `.all()` in the query chain to eliminate duplicate rows at the SQL level. Verified the fix by searching for "after hours" which previously produced 3 duplicate rows in raw SQL — the API now correctly returns 1 result. Also verified that songs without tags (like Midnight Drive) still return correctly with 1 result, and that songs with a single tag (like Block Party) also return correctly — confirming `.distinct()` did not affect results for non-duplicated cases.
 
+
+---
+
+### Issue #4 — I got notified when a friend added my song to a playlist but not when they rated it
+
+**How I reproduced it:**
+Checked nova's notifications before any rating — 1 notification existed (song_added_to_playlist). Then had darius rate nova's Midnight Drive song via `POST /songs/e171822f.../rate` with score 5. Checked nova's notifications again — still 1 notification, count unchanged. The rating was saved successfully but no notification was created.
+
+**How I found the root cause:**
+The README confirmed bugs live in the services layer. I opened `services/notification_service.py` and read both `add_to_playlist()` and `rate_song()` side by side. In `add_to_playlist()` I found a `create_notification()` call after the song is added. I then read through the entire `rate_song()` function and found it ends with `db.session.commit()` and `return rating` with no notification call anywhere. The pattern used in `add_to_playlist()` was completely absent from `rate_song()`.
+
+**The root cause:**
+In `rate_song()` in `services/notification_service.py`, the function correctly saves the rating to the database but never calls `create_notification()`. The `add_to_playlist()` function in the same file follows the correct pattern — after performing its action it checks if the song's sharer is different from the acting user and creates a notification. That pattern was simply never implemented in `rate_song()`, so rating a song produced no notification under any circumstances.
+
+**The fix and side-effect check:**
+Added a `create_notification()` call after `db.session.commit()` in `rate_song()`, mirroring the exact pattern used in `add_to_playlist()`. The condition `if song.shared_by != user_id` ensures users do not get notified when they rate their own songs. Verified the fix by having darius rate nova's Still Waters song — nova's notification count went from 1 to 2 and the new notification showed type `song_rated` with body "darius rated your song 'Still Waters' 4/5." Also confirmed that the `add_to_playlist()` notification still works correctly and was not affected by the change.
