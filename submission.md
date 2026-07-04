@@ -123,3 +123,20 @@ In `rate_song()` in `services/notification_service.py`, the function correctly s
 
 **The fix and side-effect check:**
 Added a `create_notification()` call after `db.session.commit()` in `rate_song()`, mirroring the exact pattern used in `add_to_playlist()`. The condition `if song.shared_by != user_id` ensures users do not get notified when they rate their own songs. Verified the fix by having darius rate nova's Still Waters song — nova's notification count went from 1 to 2 and the new notification showed type `song_rated` with body "darius rated your song 'Still Waters' 4/5." Also confirmed that the `add_to_playlist()` notification still works correctly and was not affected by the change.
+
+---
+
+### Issue #2 — Friends Listening Now shows people from yesterday
+
+**How I reproduced it:**
+Called `GET /feed/54c67a3e.../listening-now` and received 3 friends in the feed. Then queried the database directly with `SELECT user_id, song_id, listened_at FROM listening_event ORDER BY listened_at DESC` and confirmed the most recent listening events were from hours ago — not within any reasonable definition of "now." The feed was showing darius who listened at 23:02, simone at 22:57, and kenji at 22:52 on July 3rd, even though the current time was early July 4th.
+
+**How I found the root cause:**
+The README confirmed bugs live in the services layer. I opened `services/feed_service.py` and read `get_friends_listening_now()`. At the top of the file I found `RECENT_THRESHOLD = timedelta(hours=24)`. The function calculates a cutoff as `datetime.now(timezone.utc) - RECENT_THRESHOLD` and returns all friends who listened after that cutoff. A 24 hour window means anyone who listened in the past day appears as "listening now" — which is far too wide for a feature called "Friends Listening Now."
+
+**The root cause:**
+In `feed_service.py`, the constant `RECENT_THRESHOLD = timedelta(hours=24)` defines what counts as "recent" for the Friends Listening Now feed. A 24 hour threshold means the feed shows listening activity from the entire previous day as if it were happening right now. The feature name and user expectation is that "listening now" means currently active — within minutes, not hours. A friend who listened 23 hours ago is not listening now.
+
+**The fix and side-effect check:**
+Changed `RECENT_THRESHOLD = timedelta(hours=24)` to `RECENT_THRESHOLD = timedelta(minutes=30)` — 30 minutes is a reasonable window for "currently listening." Verified the fix by calling the endpoint again — the feed correctly returned empty since no friends had listened within the last 30 minutes, proving the threshold is now enforced properly. Checked `get_activity_feed()` in the same file — it does not use `RECENT_THRESHOLD` at all and was not affected by the change.
+
