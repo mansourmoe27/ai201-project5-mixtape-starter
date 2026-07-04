@@ -2,8 +2,48 @@
 
 ## AI Usage
 
-*(Will be filled in at the end of Milestone 4)*
+I used Claude (Anthropic) as my AI tool throughout this project for codebase navigation, 
+code explanation, and debugging guidance.
 
+**Use 1 — Initial code reading and pattern recognition:**
+I shared the full contents of all five service files with Claude and asked it to read 
+through them. Claude identified suspicious patterns in each file — the `songs[:-1]` 
+slice in playlist_service.py, the `weekday() != 6` condition in streak_service.py, 
+the missing `create_notification()` call in notification_service.py, the 24-hour 
+threshold in feed_service.py, and the `outerjoin` without `.distinct()` in 
+search_service.py. This helped me know where to look before reproducing each bug. 
+However I still had to reproduce every bug myself with curl commands and direct 
+database queries before writing any fixes — Claude could point to suspicious code 
+but could not confirm the bug without me testing it.
+
+**Use 2 — Understanding Python datetime behavior:**
+For Bug 1 (streak reset on Sundays), I asked Claude to explain exactly what 
+`datetime.weekday()` returns for each day of the week. Claude explained that 
+`weekday()` returns 0 for Monday through 6 for Sunday — which is why the condition 
+`today.weekday() != 6` was False every Sunday and blocked the streak increment. 
+I verified this by running `grep -n "weekday" services/streak_service.py` myself 
+to confirm the exact line before writing the root cause analysis.
+
+**Use 3 — Navigating unfamiliar Flask and SQLite tooling:**
+When I ran into issues with the Flask shell indentation errors and could not get 
+test data IDs, Claude suggested using `sqlite3` directly from the command line 
+instead. That approach worked immediately and gave me all the user, song, and 
+playlist IDs I needed to reproduce each bug with real data. This saved significant 
+time and taught me a useful debugging technique — going directly to the database 
+when the application layer is not cooperating.
+
+**Where I verified and course-corrected:**
+For Bug 3 (search duplicates), Claude predicted the duplicates would be visible 
+in the API response as repeated song objects. When I tested the API, only 1 result 
+appeared per song — SQLAlchemy's ORM was deduplicating at the object level. I had 
+to run the raw SQL query directly against the database to prove the duplicate rows 
+existed at the query level. Claude's explanation of why the outerjoin produces 
+duplicate rows was accurate, but its prediction about how the bug would appear 
+in the API required me to investigate further and correct through my own testing.
+
+I also caught an error where Claude stated the date was July 4th when it was 
+actually July 3rd — a small but important detail when reasoning about the 
+Sunday streak bug which is date-dependent.
 ---
 
 ## Codebase Map
