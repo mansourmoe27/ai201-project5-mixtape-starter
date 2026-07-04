@@ -140,3 +140,18 @@ In `feed_service.py`, the constant `RECENT_THRESHOLD = timedelta(hours=24)` defi
 **The fix and side-effect check:**
 Changed `RECENT_THRESHOLD = timedelta(hours=24)` to `RECENT_THRESHOLD = timedelta(minutes=30)` — 30 minutes is a reasonable window for "currently listening." Verified the fix by calling the endpoint again — the feed correctly returned empty since no friends had listened within the last 30 minutes, proving the threshold is now enforced properly. Checked `get_activity_feed()` in the same file — it does not use `RECENT_THRESHOLD` at all and was not affected by the change.
 
+---
+
+### Issue #1 — My listening streak keeps resetting
+
+**How I reproduced it:**
+Ran `grep -n "weekday" services/streak_service.py` which revealed line 73 contains `and today.weekday() != 6` as part of the streak increment condition. Python's `weekday()` returns 6 for Sunday, meaning this condition evaluates to False every Sunday — blocking the streak increment and falling through to the else branch which resets the streak to 1. Any user who listened on Saturday and then listened again on Sunday would have their streak reset despite listening on consecutive days.
+
+**How I found the root cause:**
+The README confirmed bugs live in the services layer and identified `streak_service.py` as the affected file. I opened it and read `update_listening_streak()`. The function correctly calculates `days_since_last` as the number of days between today and the last listening date. The increment condition on line 73 should fire when `days_since_last == 1` — meaning the user listened yesterday. However the condition had an extra clause `and today.weekday() != 6` which I immediately recognized as a day-of-week check. Since `weekday()` returns 6 for Sunday, this extra clause caused the entire increment branch to be skipped every Sunday.
+
+**The root cause:**
+In `update_listening_streak()` in `services/streak_service.py`, line 73 reads `elif days_since_last == 1 and today.weekday() != 6`. The `and today.weekday() != 6` condition was intended to detect a week boundary but is logically wrong. `weekday()` returns 6 for Sunday — so this condition is False every Sunday, meaning the streak never increments on Sundays regardless of whether the user listened on consecutive days. Any user who listened Saturday and then Sunday would hit the else branch and have their streak reset to 1 instead of incremented. The streak should increment whenever `days_since_last == 1` regardless of which day of the week it is.
+
+**The fix and side-effect check:**
+Removed `and today.weekday() != 6` from line 73, leaving just `elif days_since_last == 1:`. This correctly increments the streak for any consecutive day including Sunday. Verified the fix by having nova record
